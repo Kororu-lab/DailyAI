@@ -1,9 +1,13 @@
 import asyncio
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.services.news_analyzer import NewsAnalyzer
 import os
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 async def generate_report():
     """뉴스를 수집하고 분석하여 HTML 리포트를 생성합니다."""
@@ -15,9 +19,9 @@ async def generate_report():
     # 뉴스 분석기 초기화
     analyzer = NewsAnalyzer(api_key)
     
-    # 오늘 날짜의 뉴스 파일 경로 설정
-    today = datetime.now().strftime('%Y%m%d')
-    news_file = Path(f"data/ai_news_{today}.json")
+    # 어제 날짜의 뉴스 파일 경로 설정
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+    news_file = Path(f"data/ai_news_{yesterday}.json")
     if not news_file.exists():
         raise FileNotFoundError(f"뉴스 파일을 찾을 수 없습니다: {news_file}")
     
@@ -36,7 +40,7 @@ async def generate_report():
     report_dir = Path("reports")
     report_dir.mkdir(exist_ok=True)
     
-    report_file = report_dir / f"ai_news_report_{today}.html"
+    report_file = report_dir / f"ai_news_report_{yesterday}.html"
     with open(report_file, 'w', encoding='utf-8') as f:
         f.write(html)
     
