@@ -1,86 +1,87 @@
-# AI Daily News Aggregator
+# DailyAI News Reporter
 
-매일 아침 AI와 기술 관련 최신 소식들을 자동으로 수집하고 요약하여 제공하는 웹 애플리케이션입니다.
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## 주요 기능
+An automated system that collects AI-related news from various sources, generates comprehensive reports, and delivers them via email.
 
-- 다양한 소스에서 AI 및 기술 관련 뉴스 자동 수집
-- DeepSeek AI API를 활용한 뉴스 클러스터링 및 요약
-- 매일 아침 새로운 뉴스 제공
-- 웹 인터페이스를 통한 사용자 친화적인 뉴스 탐색
+## Features
 
-## 기술 스택
+- Automated news collection from multiple sources
+- AI-powered news categorization and analysis
+- Beautiful HTML report generation
+- Scheduled email delivery
+- Support for immediate report generation
 
-- Python 3.8+
-- FastAPI (웹 프레임워크)
-- DeepSeek AI API (뉴스 분석 및 요약)
-- SQLAlchemy (데이터베이스 ORM)
-- BeautifulSoup4 (웹 스크래핑)
-- React (프론트엔드)
+## Prerequisites
 
-## 설치 방법
+- Python 3.8 or higher
+- Gmail account for sending emails
+- DeepSeek API key
 
-1. 저장소 클론
+## Installation
+
+1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ai-daily-news.git
-cd ai-daily-news
+git clone https://github.com/Kororu-lab/DailyAI.git
+cd DailyAI
 ```
 
-2. 가상환경 생성 및 활성화
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 또는
-.\venv\Scripts\activate  # Windows
-```
-
-3. 의존성 설치
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. 환경 변수 설정
+3. Configure environment variables:
+Create a `.env` file in the root directory with the following content:
+```
+DEEPSEEK_API_KEY=your_api_key
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+```
+
+4. Configure email recipients:
+Edit `config/email_list.txt` to add recipient email addresses.
+
+## Usage
+
+### Scheduled Execution
+To run the scheduler that automatically collects news and sends reports at midnight:
 ```bash
-cp .env.example .env
-# .env 파일에 필요한 API 키와 설정값을 입력하세요
+./start.sh
 ```
 
-5. 데이터베이스 마이그레이션
+### Immediate Execution
+To immediately collect news, generate a report, and send it via email:
 ```bash
-alembic upgrade head
+./start.sh --now
 ```
 
-6. 애플리케이션 실행
-```bash
-uvicorn src.main:app --reload
-```
-
-## 프로젝트 구조
+## Project Structure
 
 ```
-ai-daily-news/
-├── src/                    # 소스 코드
-│   ├── api/               # API 엔드포인트
-│   ├── core/              # 핵심 기능
-│   ├── models/            # 데이터 모델
-│   ├── services/          # 비즈니스 로직
-│   └── utils/             # 유틸리티 함수
-├── tests/                 # 테스트 코드
-├── docs/                  # 문서
-├── data/                  # 데이터 파일
-├── alembic/              # 데이터베이스 마이그레이션
-├── requirements.txt      # Python 의존성
-└── README.md            # 프로젝트 설명
+DailyAI/
+├── config/
+│   └── email_list.txt    # Email recipient list
+├── data/                 # Collected news data
+├── logs/                 # Log files
+├── reports/             # Generated HTML reports
+├── src/
+│   ├── collect_news.py  # News collection script
+│   ├── generate_report.py # Report generation script
+│   ├── send_report.py   # Email sending script
+│   └── scheduler.py     # Scheduler script
+├── .env                 # Environment variables
+├── requirements.txt     # Python dependencies
+└── start.sh            # Start script
 ```
 
-## 라이선스
+## Contributing
 
-MIT License
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 기여 방법
+## License
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
