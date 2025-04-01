@@ -61,8 +61,9 @@ async def main():
     
     while True:
         now = datetime.now()
-        if now.hour == 0 and now.minute == 0:
-            logger.info("자정 작업 시작")
+        # KST 02:00에 실행 (UTC 17:00)
+        if now.hour == 2 and now.minute == 0:
+            logger.info("KST 02:00 작업 시작")
             await run_daily_task()
         
         # 1분마다 체크
