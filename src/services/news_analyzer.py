@@ -1,112 +1,359 @@
-from typing import List, Dict
+from typing import List, Dict, Any
 import asyncio
-from datetime import datetime, timedelta
-from src.models.news import News
-from src.core.database import SessionLocal
-from src.core.config import settings
+from datetime import datetime
 import logging
-from deepseek import DeepSeekAPI
+import aiohttp
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class NewsAnalyzer:
-    def __init__(self):
-        self.api = DeepSeekAPI(api_key=settings.DEEPSEEK_API_KEY)
+    """AI 뉴스 분석기"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+    
+    async def analyze_news(self, news_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """뉴스 목록을 분석하여 분류와 요약을 생성합니다."""
+        logger.info(f"분석 시작: 총 {len(news_list)}개의 뉴스")
         
-    async def analyze_news(self, news: News) -> Dict:
-        try:
-            # 뉴스 내용 요약
-            summary_prompt = f"다음 뉴스 기사를 3-4 문장으로 요약해주세요:\n\n{news.content}"
-            summary = await self.api.generate_text(summary_prompt)
-            
-            # 감성 분석
-            sentiment_prompt = f"다음 뉴스의 감성을 분석해주세요 (긍정/중립/부정):\n\n{news.content}"
-            sentiment = await self.api.generate_text(sentiment_prompt)
-            
-            # 키워드 추출
-            keywords_prompt = f"다음 뉴스에서 가장 중요한 키워드 5개를 추출해주세요:\n\n{news.content}"
-            keywords = await self.api.generate_text(keywords_prompt)
-            
-            return {
-                "summary": summary,
-                "sentiment": sentiment,
-                "keywords": keywords
-            }
-        except Exception as e:
-            logger.error(f"Error analyzing news {news.id}: {str(e)}")
-            return None
+        # 1단계: 분야별 분류 및 필터링
+        classified_news = await self._classify_news(news_list)
+        logger.info(f"분류 완료: {len(classified_news)}개의 뉴스가 분류됨")
+        
+        # 2단계: 뉴스 메타데이터 정리
+        processed_news = self._process_metadata(classified_news)
+        logger.info(f"메타데이터 처리 완료: {len(processed_news)}개의 뉴스")
+        
+        # 3단계: 본문 요약
+        summarized_news = await self._summarize_news(processed_news)
+        logger.info(f"요약 완료: {len(summarized_news)}개의 뉴스")
+        
+        return summarized_news
 
-    async def cluster_news(self, news_list: List[News]) -> List[Dict]:
+    async def _classify_news(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """뉴스를 분야별로 분류하고 불필요한 뉴스를 필터링합니다."""
+        logger.info("뉴스 분류 시작")
+        
+        # 전체 뉴스 정보를 한 번에 전송
+        news_text = ""
+        for i, news in enumerate(news_list):
+            news_text += f"""
+{i+1}. 제목: {news['title']}
+본문: {news['body'][:500]}...
+"""
+        
+        clustering_prompt = f"""다음 AI 관련 뉴스들을 분석하여 적절한 카테고리로 분류해주세요.
+각 뉴스의 내용을 고려하여 가장 적합한 카테고리를 지정해주세요.
+
+{news_text}
+
+응답 형식:
+[뉴스 번호]: [카테고리] - [분류 이유]
+예시:
+1: AI 모델 개발 - 새로운 언어 모델 개발 소식
+2: AI 규제 정책 - 정부의 AI 규제 프레임워크 발표
+...
+"""
+        
         try:
-            # 뉴스 클러스터링을 위한 프롬프트 생성
-            news_texts = [f"{news.title}\n{news.content}" for news in news_list]
-            cluster_prompt = f"다음 뉴스들을 주제별로 그룹화해주세요:\n\n{'\n\n'.join(news_texts)}"
-            
-            # DeepSeek AI를 사용하여 클러스터링 수행
-            clusters = await self.api.generate_text(cluster_prompt)
-            
-            # 클러스터 결과 파싱 및 반환
-            return self._parse_clusters(clusters)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": clustering_prompt}],
+                        "temperature": 0.3
+                    }
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        clustering_text = result['choices'][0]['message']['content']
+                        
+                        # 분류 결과 파싱
+                        classified_news = []
+                        for line in clustering_text.split('\n'):
+                            if ':' in line:
+                                try:
+                                    # 뉴스 번호와 카테고리 추출
+                                    news_idx = int(line.split(':')[0].strip())
+                                    category = line.split(':')[1].split('-')[0].strip()
+                                    
+                                    if 1 <= news_idx <= len(news_list):
+                                        news = news_list[news_idx - 1]
+                                        news['category'] = category
+                                        classified_news.append(news)
+                                        logger.info(f"분류 완료: {news['title']} -> {news['category']}")
+                                except (ValueError, IndexError) as e:
+                                    logger.warning(f"분류 결과 파싱 오류: {str(e)}")
+                                    continue
+                        
+                        # 카테고리별 통계
+                        category_stats = {}
+                        for news in classified_news:
+                            category = news['category']
+                            if category not in category_stats:
+                                category_stats[category] = 0
+                            category_stats[category] += 1
+                        
+                        logger.info(f"분류 통계: {category_stats}")
+                        return classified_news
+                    else:
+                        logger.error(f"API 호출 실패: {response.status}")
+                        return []
         except Exception as e:
-            logger.error(f"Error clustering news: {str(e)}")
+            logger.error(f"분류 중 오류 발생: {str(e)}")
             return []
 
-    def _parse_clusters(self, cluster_text: str) -> List[Dict]:
-        # 클러스터 텍스트를 파싱하여 구조화된 데이터로 변환
-        # 실제 구현에서는 더 복잡한 파싱 로직이 필요할 수 있습니다
-        clusters = []
-        current_cluster = {"name": "", "news_ids": []}
-        
-        for line in cluster_text.split("\n"):
-            if line.startswith("Cluster"):
-                if current_cluster["name"]:
-                    clusters.append(current_cluster)
-                current_cluster = {"name": line, "news_ids": []}
-            elif line.strip():
-                # 뉴스 ID 추출 로직 (실제 구현에서는 더 정교한 파싱이 필요)
-                try:
-                    news_id = int(line.split(":")[0].strip())
-                    current_cluster["news_ids"].append(news_id)
-                except:
-                    continue
-        
-        if current_cluster["name"]:
-            clusters.append(current_cluster)
-            
-        return clusters
+    def _process_metadata(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """뉴스 메타데이터를 정리합니다."""
+        logger.info("메타데이터 처리 시작")
+        processed_news = []
+        for news in news_list:
+            processed_news.append({
+                'title': news['title'],
+                'url': news['url'],
+                'date': news['date'],
+                'author': news.get('author', '작성자 미상'),
+                'source': news.get('source', '출처 미상'),
+                'category': news['category'],
+                'body': news['body'],
+                'summary': news.get('body', '')[:200] + '...'  # 임시 요약
+            })
+        logger.info(f"메타데이터 처리 완료: {len(processed_news)}개의 뉴스")
+        return processed_news
 
-    async def process_news(self):
-        db = SessionLocal()
-        try:
-            # 최근 24시간 동안의 뉴스 가져오기
-            recent_news = db.query(News).filter(
-                News.created_at >= datetime.utcnow() - timedelta(hours=24)
-            ).all()
+    async def _summarize_news(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """뉴스 본문을 요약합니다."""
+        logger.info("뉴스 요약 시작")
+        return news_list  # 임시로 요약 단계 스킵
+
+    def generate_html(self, news_list: List[Dict[str, Any]]) -> str:
+        """뉴스 목록을 HTML로 변환합니다."""
+        logger.info("HTML 생성 시작")
+        
+        # 카테고리별로 뉴스 그룹화
+        categorized_news = {}
+        for news in news_list:
+            category = news['category']
+            if category not in categorized_news:
+                categorized_news[category] = []
+            categorized_news[category].append(news)
+        
+        logger.info(f"카테고리별 뉴스 수: {[(k, len(v)) for k, v in categorized_news.items()]}")
+        
+        # HTML 생성
+        sections_html = []
+        for category, news_items in categorized_news.items():
+            items_html = []
+            for news in news_items:
+                items_html.append(f"""
+                <div class="analysis-item">
+                    <div class="item-header">
+                        <h3>{news['title']}</h3>
+                        <a href="{news['url']}" class="source-link" target="_blank" rel="noopener noreferrer">
+                            <span class="source-icon">🔗</span> 원문 보기
+                        </a>
+                    </div>
+                    <div class="item-content">
+                        <p>{news['summary']}</p>
+                        <div class="news-meta">
+                            <span class="source">{news['source']}</span>
+                            <span class="author">{news['author']}</span>
+                            <span class="date">{news['date']}</span>
+                        </div>
+                    </div>
+                </div>
+                """)
             
-            # 각 뉴스 분석
-            for news in recent_news:
-                analysis = await self.analyze_news(news)
-                if analysis:
-                    news.summary = analysis["summary"]
-                    news.sentiment = analysis["sentiment"]
-                    news.keywords = analysis["keywords"]
-            
-            # 뉴스 클러스터링
-            if recent_news:
-                clusters = await self.cluster_news(recent_news)
-                for cluster in clusters:
-                    for news_id in cluster["news_ids"]:
-                        news = db.query(News).filter(News.id == news_id).first()
-                        if news:
-                            news.cluster_id = clusters.index(cluster)
-                            news.cluster_name = cluster["name"]
-            
-            db.commit()
-            logger.info(f"Processed {len(recent_news)} news items")
-            
-        except Exception as e:
-            logger.error(f"Error processing news: {str(e)}")
-            db.rollback()
-        finally:
-            db.close() 
+            sections_html.append(f"""
+            <div class="section">
+                <h2>{category}</h2>
+                {''.join(items_html)}
+            </div>
+            """)
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>AI 뉴스 분석 리포트</title>
+            <style>
+                :root {{
+                    --primary-color: #2563eb;
+                    --secondary-color: #1e40af;
+                    --text-color: #1f2937;
+                    --bg-color: #f3f4f6;
+                    --card-bg: #ffffff;
+                    --border-color: #e5e7eb;
+                }}
+                
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    line-height: 1.6;
+                    color: var(--text-color);
+                    background-color: var(--bg-color);
+                }}
+                
+                .container {{
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    padding: 2rem;
+                }}
+                
+                .header {{
+                    text-align: center;
+                    margin-bottom: 3rem;
+                    padding: 2rem;
+                    background: var(--card-bg);
+                    border-radius: 1rem;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                }}
+                
+                .header h1 {{
+                    color: var(--primary-color);
+                    font-size: 2.5rem;
+                    margin-bottom: 1rem;
+                }}
+                
+                .date {{
+                    color: #6b7280;
+                    font-size: 1rem;
+                }}
+                
+                .section {{
+                    margin-bottom: 2rem;
+                    padding: 2rem;
+                    background: var(--card-bg);
+                    border-radius: 1rem;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                }}
+                
+                .section h2 {{
+                    color: var(--primary-color);
+                    font-size: 1.8rem;
+                    margin-bottom: 1.5rem;
+                    padding-bottom: 0.5rem;
+                    border-bottom: 2px solid var(--border-color);
+                }}
+                
+                .analysis-item {{
+                    margin-bottom: 1.5rem;
+                    padding: 1.5rem;
+                    background: var(--bg-color);
+                    border-radius: 0.75rem;
+                    transition: transform 0.2s ease;
+                }}
+                
+                .analysis-item:hover {{
+                    transform: translateY(-2px);
+                }}
+                
+                .item-header {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 1rem;
+                }}
+                
+                .item-header h3 {{
+                    color: var(--text-color);
+                    font-size: 1.4rem;
+                    font-weight: 600;
+                }}
+                
+                .source-link {{
+                    display: inline-flex;
+                    align-items: center;
+                    padding: 0.5rem 1rem;
+                    background: var(--primary-color);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 0.5rem;
+                    font-size: 0.9rem;
+                    transition: background-color 0.2s ease;
+                }}
+                
+                .source-link:hover {{
+                    background: var(--secondary-color);
+                }}
+                
+                .source-icon {{
+                    margin-right: 0.5rem;
+                }}
+                
+                .item-content {{
+                    color: #4b5563;
+                }}
+                
+                .item-content p {{
+                    margin: 0 0 1rem 0;
+                }}
+                
+                .news-meta {{
+                    display: flex;
+                    gap: 1rem;
+                    font-size: 0.9rem;
+                    color: #6b7280;
+                    margin-top: 1rem;
+                    padding-top: 1rem;
+                    border-top: 1px solid var(--border-color);
+                }}
+                
+                .source, .author {{
+                    font-weight: 500;
+                }}
+                
+                @media (max-width: 768px) {{
+                    .container {{
+                        padding: 1rem;
+                    }}
+                    
+                    .header h1 {{
+                        font-size: 2rem;
+                    }}
+                    
+                    .section {{
+                        padding: 1.5rem;
+                    }}
+                    
+                    .item-header {{
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 1rem;
+                    }}
+                    
+                    .source-link {{
+                        width: 100%;
+                        justify-content: center;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>AI 뉴스 분석 리포트</h1>
+                    <div class="date">생성일: {datetime.now().strftime('%Y-%m-%d')}</div>
+                </div>
+                {''.join(sections_html)}
+            </div>
+        </body>
+        </html>
+        """
+        return html 

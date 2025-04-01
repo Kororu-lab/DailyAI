@@ -43,4 +43,9 @@ ENV/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Test files
+.pytest_cache/
+tests/
+test_news_cycle.py 
