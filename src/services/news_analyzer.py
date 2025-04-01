@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 import aiohttp
 import re
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -135,51 +136,97 @@ class NewsAnalyzer:
         logger.info("뉴스 요약 시작")
         return news_list  # 임시로 요약 단계 스킵
 
-    def generate_html(self, news_list: List[Dict[str, Any]]) -> str:
-        """뉴스 목록을 HTML로 변환합니다."""
-        logger.info("HTML 생성 시작")
+    def format_analysis_item(self, item: Dict[str, Any]) -> str:
+        """분석 항목을 HTML 형식으로 변환합니다."""
+        # 제목 추출 (마크다운 형식 처리)
+        title = item.get('title', '제목 없음')
+        
+        # URL 추출
+        url = item.get('url', '#')
+        
+        # 요약 및 번역 생성
+        summary_prompt = f"""다음 뉴스의 핵심 내용을 2-3문장으로 요약하고 한국어로 번역해주세요:
+
+제목: {title}
+본문: {item.get('body', '')[:500]}...
+
+응답 형식:
+[요약]
+[한국어 번역]
+"""
+        
+        try:
+            response = requests.post(
+                self.api_url,
+                headers=self.headers,
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": summary_prompt}],
+                    "temperature": 0.3
+                }
+            )
+            if response.status_code == 200:
+                result = response.json()
+                summary_text = result['choices'][0]['message']['content'].strip()
+                
+                # 요약과 번역 분리
+                summary_parts = summary_text.split('\n\n')
+                summary = summary_parts[0].replace('[요약]', '').strip() if len(summary_parts) > 0 else ''
+                translation = summary_parts[1].replace('[한국어 번역]', '').strip() if len(summary_parts) > 1 else ''
+            else:
+                summary = item.get('body', '')[:200] + "..."
+                translation = ""
+        except Exception as e:
+            logger.error(f"요약 생성 중 오류 발생: {str(e)}")
+            summary = item.get('body', '')[:200] + "..."
+            translation = ""
+        
+        # 카테고리 추출
+        category = item.get('category', '미분류')
+        
+        # HTML 형식으로 변환
+        html = f"""
+        <div class="analysis-item">
+            <div class="item-header">
+                <div>
+                    <h3>{title}</h3>
+                    <p class="summary">{summary}</p>
+                    <p class="translation">{translation}</p>
+                </div>
+                <a href="{url}" class="source-link" target="_blank" rel="noopener noreferrer">
+                    <span class="source-icon">🔗</span> 원문 보기
+                </a>
+            </div>
+            <div class="item-content">
+                <div class="news-meta">
+                    <span class="source">{item.get('source', '출처 미상')}</span>
+                    <span class="author">{item.get('author', '작성자 미상')}</span>
+                    <span class="date">{item.get('date', '')}</span>
+                </div>
+                <div class="category-tag">{category}</div>
+            </div>
+        </div>
+        """
+        return html
+
+    def generate_html(self, analysis_results: List[Dict[str, Any]]) -> str:
+        """분석 결과를 HTML 형식으로 변환합니다."""
+        # AI 관련성이 낮은 뉴스 필터링
+        filtered_results = [item for item in analysis_results if not item.get('category', '').startswith('(AI')]
         
         # 카테고리별로 뉴스 그룹화
-        categorized_news = {}
-        for news in news_list:
-            category = news['category']
-            if category not in categorized_news:
-                categorized_news[category] = []
-            categorized_news[category].append(news)
+        category_news = {}
+        for item in filtered_results:
+            category = item.get('category', '미분류')
+            if category not in category_news:
+                category_news[category] = []
+            category_news[category].append(item)
         
-        logger.info(f"카테고리별 뉴스 수: {[(k, len(v)) for k, v in categorized_news.items()]}")
+        # 카테고리별 뉴스 수 계산
+        category_counts = [(category, len(news)) for category, news in category_news.items()]
+        logger.info(f"카테고리별 뉴스 수: {category_counts}")
         
         # HTML 생성
-        sections_html = []
-        for category, news_items in categorized_news.items():
-            items_html = []
-            for news in news_items:
-                items_html.append(f"""
-                <div class="analysis-item">
-                    <div class="item-header">
-                        <h3>{news['title']}</h3>
-                        <a href="{news['url']}" class="source-link" target="_blank" rel="noopener noreferrer">
-                            <span class="source-icon">🔗</span> 원문 보기
-                        </a>
-                    </div>
-                    <div class="item-content">
-                        <p>{news['summary']}</p>
-                        <div class="news-meta">
-                            <span class="source">{news['source']}</span>
-                            <span class="author">{news['author']}</span>
-                            <span class="date">{news['date']}</span>
-                        </div>
-                    </div>
-                </div>
-                """)
-            
-            sections_html.append(f"""
-            <div class="section">
-                <h2>{category}</h2>
-                {''.join(items_html)}
-            </div>
-            """)
-
         html = f"""
         <!DOCTYPE html>
         <html lang="ko">
@@ -267,7 +314,7 @@ class NewsAnalyzer:
                 .item-header {{
                     display: flex;
                     justify-content: space-between;
-                    align-items: center;
+                    align-items: flex-start;
                     margin-bottom: 1rem;
                 }}
                 
@@ -275,6 +322,20 @@ class NewsAnalyzer:
                     color: var(--text-color);
                     font-size: 1.4rem;
                     font-weight: 600;
+                    margin-bottom: 0.5rem;
+                }}
+                
+                .item-header .summary {{
+                    color: #4b5563;
+                    font-size: 1rem;
+                    margin-bottom: 0.5rem;
+                }}
+                
+                .item-header .translation {{
+                    color: #4b5563;
+                    font-size: 1rem;
+                    margin-bottom: 0.5rem;
+                    font-style: italic;
                 }}
                 
                 .source-link {{
@@ -301,10 +362,6 @@ class NewsAnalyzer:
                     color: #4b5563;
                 }}
                 
-                .item-content p {{
-                    margin: 0 0 1rem 0;
-                }}
-                
                 .news-meta {{
                     display: flex;
                     gap: 1rem;
@@ -317,6 +374,17 @@ class NewsAnalyzer:
                 
                 .source, .author {{
                     font-weight: 500;
+                }}
+                
+                .category-tag {{
+                    display: inline-block;
+                    padding: 0.25rem 0.75rem;
+                    background: var(--primary-color);
+                    color: white;
+                    border-radius: 9999px;
+                    font-size: 0.875rem;
+                    font-weight: 500;
+                    margin-top: 0.5rem;
                 }}
                 
                 @media (max-width: 768px) {{
@@ -351,9 +419,26 @@ class NewsAnalyzer:
                     <h1>AI 뉴스 분석 리포트</h1>
                     <div class="date">생성일: {datetime.now().strftime('%Y-%m-%d')}</div>
                 </div>
-                {''.join(sections_html)}
+        """
+        
+        # 카테고리별 섹션 생성
+        for category, news in category_news.items():
+            html += f"""
+            <div class="section">
+                <h2>{category}</h2>
+            """
+            
+            for item in news:
+                html += self.format_analysis_item(item)
+            
+            html += """
+                </div>
+            """
+        
+        html += """
             </div>
         </body>
         </html>
         """
+        
         return html 
