@@ -188,9 +188,8 @@ class NewsAnalyzer:
         html = f"""
         <div class="analysis-item">
             <div class="item-header">
-                <div>
+                <div class="item-content">
                     <h3>{title}</h3>
-                    <p class="summary">{summary}</p>
                     <p class="translation">{translation}</p>
                 </div>
                 <a href="{url}" class="source-link" target="_blank" rel="noopener noreferrer">
@@ -316,18 +315,17 @@ class NewsAnalyzer:
                     justify-content: space-between;
                     align-items: flex-start;
                     margin-bottom: 1rem;
+                    gap: 1rem;
+                }}
+                
+                .item-header .item-content {{
+                    flex: 1;
                 }}
                 
                 .item-header h3 {{
                     color: var(--text-color);
                     font-size: 1.4rem;
                     font-weight: 600;
-                    margin-bottom: 0.5rem;
-                }}
-                
-                .item-header .summary {{
-                    color: #4b5563;
-                    font-size: 1rem;
                     margin-bottom: 0.5rem;
                 }}
                 
@@ -348,6 +346,7 @@ class NewsAnalyzer:
                     border-radius: 0.5rem;
                     font-size: 0.9rem;
                     transition: background-color 0.2s ease;
+                    white-space: nowrap;
                 }}
                 
                 .source-link:hover {{
