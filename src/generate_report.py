@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from datetime import datetime
 from src.services.news_analyzer import NewsAnalyzer
-from src.collect_news import collect_news
 import os
 
 async def generate_report():
@@ -16,8 +15,9 @@ async def generate_report():
     # 뉴스 분석기 초기화
     analyzer = NewsAnalyzer(api_key)
     
-    # 뉴스 데이터 로드
-    news_file = Path("data/ai_news_20250401.json")
+    # 오늘 날짜의 뉴스 파일 경로 설정
+    today = datetime.now().strftime('%Y%m%d')
+    news_file = Path(f"data/ai_news_{today}.json")
     if not news_file.exists():
         raise FileNotFoundError(f"뉴스 파일을 찾을 수 없습니다: {news_file}")
     
@@ -36,7 +36,7 @@ async def generate_report():
     report_dir = Path("reports")
     report_dir.mkdir(exist_ok=True)
     
-    report_file = report_dir / f"ai_news_report_{datetime.now().strftime('%Y%m%d')}.html"
+    report_file = report_dir / f"ai_news_report_{today}.html"
     with open(report_file, 'w', encoding='utf-8') as f:
         f.write(html)
     
